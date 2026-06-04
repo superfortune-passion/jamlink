@@ -47,18 +47,20 @@ export function useSignaling(): UseSignalingReturn {
   const iceCbRef = useRef<((data: { roomId: string; candidate: RTCIceCandidateInit; from: string }) => void) | null>(null);
   const disconnectCbRef = useRef<((reason: string) => void) | null>(null);
   const matchedCbRef = useRef<((data: MatchedPayload) => void) | null>(null);
+  const listenersBoundRef = useRef(false);
 
   const connect = useCallback(() => {
     const socket = connectSocket();
     setConnectionState('connecting');
 
-    socket.on('connect', () => {
-      setConnectionState('idle');
-    });
+    if (listenersBoundRef.current) return;
+    listenersBoundRef.current = true;
+
+    socket.on('connect', () => setConnectionState('idle'));
 
     socket.on('connected', (data) => {
       setUserId(data.userId);
-      setIceServers(data.iceServers);
+      if (data.iceServers?.length) setIceServers(data.iceServers);
     });
 
     socket.on('searching', (data) => {
@@ -113,17 +115,14 @@ export function useSignaling(): UseSignalingReturn {
       setTimeout(() => setError(null), 5000);
     });
 
-    socket.on('disconnect', () => {
-      setConnectionState('reconnecting');
-    });
-
-    socket.io.on('reconnect', () => {
-      setConnectionState('idle');
-    });
+    socket.on('disconnect', () => setConnectionState('reconnecting'));
+    socket.io.on('reconnect', () => setConnectionState('idle'));
   }, []);
 
   useEffect(() => {
-    fetchIceServers().then(setIceServers);
+    fetchIceServers().then((servers) => {
+      if (servers.length) setIceServers(servers);
+    });
   }, []);
 
   const search = useCallback((interests: string[], searchMode: MatchMode = 'match') => {

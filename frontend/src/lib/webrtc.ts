@@ -11,6 +11,7 @@ export function buildRtcConfig(iceServers: IceServerConfig[]): RTCConfiguration 
     iceTransportPolicy: 'all',
     bundlePolicy: 'max-bundle',
     rtcpMuxPolicy: 'require',
+    iceCandidatePoolSize: 10,
   };
 }
 

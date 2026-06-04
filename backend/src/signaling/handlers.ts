@@ -176,6 +176,8 @@ export function registerSignalingHandlers(deps: SignalingDeps): void {
           peerB.isSearching = false;
           peerA.currentPeerId = match.peerB;
           peerB.currentPeerId = match.peerA;
+          peerA.currentRoomId = match.roomId;
+          peerB.currentRoomId = match.roomId;
 
           io.to(match.peerA).emit('matched', {
             roomId: match.roomId,
@@ -197,6 +199,8 @@ export function registerSignalingHandlers(deps: SignalingDeps): void {
       const peerId = session.currentPeerId;
       if (peerId && data.roomId === session.currentRoomId) {
         io.to(peerId).emit('offer', { roomId: data.roomId, sdp: data.sdp, from: socket.id });
+      } else {
+        console.warn('[signaling] offer dropped', { socketId: socket.id, peerId, roomId: data.roomId, sessionRoom: session.currentRoomId });
       }
     });
 
@@ -204,6 +208,8 @@ export function registerSignalingHandlers(deps: SignalingDeps): void {
       const peerId = session.currentPeerId;
       if (peerId && data.roomId === session.currentRoomId) {
         io.to(peerId).emit('answer', { roomId: data.roomId, sdp: data.sdp, from: socket.id });
+      } else {
+        console.warn('[signaling] answer dropped', { socketId: socket.id, peerId, roomId: data.roomId, sessionRoom: session.currentRoomId });
       }
     });
 

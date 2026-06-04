@@ -15,7 +15,7 @@ import type { IceServerConfig } from '@/types';
 
 interface UseWebRTCOptions {
   iceServers: IceServerConfig[];
-  onIceCandidate: (candidate: RTCIceCandidateInit) => void;
+  onIceCandidate: (roomId: string, candidate: RTCIceCandidateInit) => void;
 }
 
 interface UseWebRTCReturn {
@@ -25,13 +25,17 @@ interface UseWebRTCReturn {
   isConnected: boolean;
   connectionQuality: 'excellent' | 'good' | 'poor' | 'unknown';
   initLocalStream: () => Promise<MediaStream | null>;
-  startCall: (isInitiator: boolean, roomId: string) => Promise<RTCSessionDescriptionInit | null>;
+  startCallAsInitiator: (roomId: string) => Promise<RTCSessionDescriptionInit | null>;
   handleOffer: (sdp: RTCSessionDescriptionInit, roomId: string) => Promise<RTCSessionDescriptionInit>;
   handleAnswer: (sdp: RTCSessionDescriptionInit) => Promise<void>;
   handleIceCandidate: (candidate: RTCIceCandidateInit) => Promise<void>;
   toggleMute: () => void;
   endCall: () => void;
   remoteAudioRef: React.RefObject<HTMLAudioElement>;
+}
+
+function hasLiveAudioTrack(stream: MediaStream | null): boolean {
+  return !!stream?.getAudioTracks().some((t) => t.readyState === 'live');
 }
 
 export function useWebRTC({ iceServers, onIceCandidate }: UseWebRTCOptions): UseWebRTCReturn {
@@ -44,9 +48,14 @@ export function useWebRTC({ iceServers, onIceCandidate }: UseWebRTCOptions): Use
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const remoteAudioRef = useRef<HTMLAudioElement>(null);
   const pendingCandidatesRef = useRef<RTCIceCandidateInit[]>([]);
-  const roomIdRef = useRef<string | null>(null);
+  const activeRoomIdRef = useRef<string | null>(null);
   const iceServersRef = useRef(iceServers);
+  const onIceCandidateRef = useRef(onIceCandidate);
+  const localStreamRef = useRef<MediaStream | null>(null);
+
   iceServersRef.current = iceServers;
+  onIceCandidateRef.current = onIceCandidate;
+  localStreamRef.current = localStream;
 
   const cleanupPeerConnection = useCallback(() => {
     if (pcRef.current) {
@@ -58,6 +67,7 @@ export function useWebRTC({ iceServers, onIceCandidate }: UseWebRTCOptions): Use
       pcRef.current = null;
     }
     pendingCandidatesRef.current = [];
+    activeRoomIdRef.current = null;
     setRemoteStream(null);
     setIsConnected(false);
     setConnectionQuality('unknown');
@@ -65,28 +75,50 @@ export function useWebRTC({ iceServers, onIceCandidate }: UseWebRTCOptions): Use
 
   const endCall = useCallback(() => {
     cleanupPeerConnection();
-    stopMediaStream(localStream);
+    stopMediaStream(localStreamRef.current);
     setLocalStream(null);
+    localStreamRef.current = null;
     if (remoteAudioRef.current) {
       remoteAudioRef.current.srcObject = null;
     }
-  }, [cleanupPeerConnection, localStream]);
+  }, [cleanupPeerConnection]);
 
   const initLocalStream = useCallback(async (): Promise<MediaStream | null> => {
+    if (hasLiveAudioTrack(localStreamRef.current)) {
+      return localStreamRef.current;
+    }
     try {
-      stopMediaStream(localStream);
+      stopMediaStream(localStreamRef.current);
       const stream = await getOptimizedAudioStream();
+      localStreamRef.current = stream;
       setLocalStream(stream);
       return stream;
     } catch (err) {
       console.error('Microphone access denied:', err);
       return null;
     }
-  }, [localStream]);
+  }, []);
+
+  const flushPendingCandidates = useCallback(async () => {
+    const pc = pcRef.current;
+    if (!pc?.remoteDescription) return;
+
+    const pending = [...pendingCandidatesRef.current];
+    pendingCandidatesRef.current = [];
+
+    for (const candidate of pending) {
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch {
+        // Stale candidate — ignore
+      }
+    }
+  }, []);
 
   const setupPeerConnection = useCallback(
-    (stream: MediaStream) => {
+    (stream: MediaStream, roomId: string) => {
       cleanupPeerConnection();
+      activeRoomIdRef.current = roomId;
 
       const config = buildRtcConfig(iceServersRef.current);
       const pc = createPeerConnection(config);
@@ -97,17 +129,17 @@ export function useWebRTC({ iceServers, onIceCandidate }: UseWebRTCOptions): Use
       });
 
       pc.ontrack = (event) => {
-        const [remote] = event.streams;
-        if (remote) {
-          setRemoteStream(remote);
-          attachRemoteAudio(remote, remoteAudioRef.current);
-          setIsConnected(true);
-        }
+        const remote =
+          event.streams?.[0] ?? new MediaStream([event.track]);
+        setRemoteStream(remote);
+        attachRemoteAudio(remote, remoteAudioRef.current);
+        setIsConnected(true);
       };
 
       pc.onicecandidate = (event) => {
-        if (event.candidate) {
-          onIceCandidate(event.candidate.toJSON());
+        const rid = activeRoomIdRef.current;
+        if (event.candidate && rid) {
+          onIceCandidateRef.current(rid, event.candidate.toJSON());
         }
       };
 
@@ -115,7 +147,10 @@ export function useWebRTC({ iceServers, onIceCandidate }: UseWebRTCOptions): Use
         const state = pc.connectionState;
         if (state === 'connected') {
           setIsConnected(true);
-        } else if (state === 'failed' || state === 'closed') {
+        } else if (state === 'failed') {
+          setConnectionQuality('poor');
+          setIsConnected(false);
+        } else if (state === 'closed') {
           setIsConnected(false);
         }
       };
@@ -124,6 +159,7 @@ export function useWebRTC({ iceServers, onIceCandidate }: UseWebRTCOptions): Use
         const state = pc.iceConnectionState;
         if (state === 'connected' || state === 'completed') {
           setConnectionQuality('excellent');
+          setIsConnected(true);
         } else if (state === 'checking') {
           setConnectionQuality('good');
         } else if (state === 'disconnected' || state === 'failed') {
@@ -133,55 +169,36 @@ export function useWebRTC({ iceServers, onIceCandidate }: UseWebRTCOptions): Use
 
       return pc;
     },
-    [onIceCandidate, cleanupPeerConnection]
+    [cleanupPeerConnection]
   );
 
-  const flushPendingCandidates = useCallback(async () => {
-    const pc = pcRef.current;
-    if (!pc || !pc.remoteDescription) return;
-
-    for (const candidate of pendingCandidatesRef.current) {
-      try {
-        await pc.addIceCandidate(new RTCIceCandidate(candidate));
-      } catch {
-        // Ignore stale candidates
-      }
-    }
-    pendingCandidatesRef.current = [];
-  }, []);
-
-  const startCall = useCallback(
-    async (isInitiator: boolean, roomId: string): Promise<RTCSessionDescriptionInit | null> => {
-      roomIdRef.current = roomId;
-      const stream = localStream ?? (await initLocalStream());
+  const startCallAsInitiator = useCallback(
+    async (roomId: string): Promise<RTCSessionDescriptionInit | null> => {
+      const stream = await initLocalStream();
       if (!stream) return null;
 
-      const pc = setupPeerConnection(stream);
-
-      if (isInitiator) {
-        return createOffer(pc);
-      }
-      return null;
+      const pc = setupPeerConnection(stream, roomId);
+      const offer = await createOffer(pc);
+      await flushPendingCandidates();
+      return offer;
     },
-    [localStream, initLocalStream, setupPeerConnection]
+    [initLocalStream, setupPeerConnection, flushPendingCandidates]
   );
 
   const handleOffer = useCallback(
     async (sdp: RTCSessionDescriptionInit, roomId: string): Promise<RTCSessionDescriptionInit> => {
-      roomIdRef.current = roomId;
-      const stream = localStream ?? (await initLocalStream());
+      const stream = await initLocalStream();
       if (!stream) throw new Error('No local stream');
 
-      // Always create a fresh PC when answering an offer
-      const pc = setupPeerConnection(stream);
-
+      const pc = setupPeerConnection(stream, roomId);
       await pc.setRemoteDescription(new RTCSessionDescription(sdp));
       await flushPendingCandidates();
 
       const answer = await createAnswer(pc);
+      await flushPendingCandidates();
       return answer;
     },
-    [localStream, initLocalStream, setupPeerConnection, flushPendingCandidates]
+    [initLocalStream, setupPeerConnection, flushPendingCandidates]
   );
 
   const handleAnswer = useCallback(
@@ -197,7 +214,11 @@ export function useWebRTC({ iceServers, onIceCandidate }: UseWebRTCOptions): Use
   const handleIceCandidate = useCallback(
     async (candidate: RTCIceCandidateInit) => {
       const pc = pcRef.current;
-      if (!pc || !pc.remoteDescription) {
+      if (!pc) {
+        pendingCandidatesRef.current.push(candidate);
+        return;
+      }
+      if (!pc.remoteDescription) {
         pendingCandidatesRef.current.push(candidate);
         return;
       }
@@ -213,17 +234,24 @@ export function useWebRTC({ iceServers, onIceCandidate }: UseWebRTCOptions): Use
   const toggleMute = useCallback(() => {
     setIsMuted((prev) => {
       const next = !prev;
-      setTrackEnabled(localStream, !next);
+      setTrackEnabled(localStreamRef.current, !next);
       return next;
     });
-  }, [localStream]);
+  }, []);
+
+  // Re-attach remote audio when stream or ref updates
+  useEffect(() => {
+    if (remoteStream && remoteAudioRef.current) {
+      attachRemoteAudio(remoteStream, remoteAudioRef.current);
+    }
+  }, [remoteStream]);
 
   useEffect(() => {
     return () => {
       cleanupPeerConnection();
-      stopMediaStream(localStream);
+      stopMediaStream(localStreamRef.current);
     };
-  }, [cleanupPeerConnection, localStream]);
+  }, [cleanupPeerConnection]);
 
   return {
     localStream,
@@ -232,7 +260,7 @@ export function useWebRTC({ iceServers, onIceCandidate }: UseWebRTCOptions): Use
     isConnected,
     connectionQuality,
     initLocalStream,
-    startCall,
+    startCallAsInitiator,
     handleOffer,
     handleAnswer,
     handleIceCandidate,

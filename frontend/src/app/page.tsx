@@ -46,13 +46,9 @@ export default function HomePage() {
     iceServers,
   } = signaling;
 
-  const roomIdRef = useRef<string | null>(null);
-  roomIdRef.current = roomId;
-
   const handleIceCandidate = useCallback(
-    (candidate: RTCIceCandidateInit) => {
-      const rid = roomIdRef.current;
-      if (rid) sendIceCandidate(rid, candidate);
+    (roomId: string, candidate: RTCIceCandidateInit) => {
+      sendIceCandidate(roomId, candidate);
     },
     [sendIceCandidate]
   );
@@ -93,17 +89,11 @@ export default function HomePage() {
   // WebRTC signaling handlers
   useEffect(() => {
     onMatched(async (data) => {
-      // Must set before ICE gathering — roomId state updates lag one render
-      roomIdRef.current = data.roomId;
-
-      const rtc = webrtcRef.current;
       if (data.isInitiator) {
-        const offer = await rtc.startCall(true, data.roomId);
+        const offer = await webrtcRef.current.startCallAsInitiator(data.roomId);
         if (offer) sendOfferRef.current(data.roomId, offer);
-      } else {
-        // Non-initiator: only prepare mic — handleOffer creates the peer connection
-        await rtc.initLocalStream();
       }
+      // Non-initiator: wait for offer event — do NOT touch peer connection here
     });
 
     onOffer(async (data) => {
