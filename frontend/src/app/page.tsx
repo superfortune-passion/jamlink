@@ -24,6 +24,7 @@ export default function HomePage() {
   const roomIdRef = useRef<string | null>(null);
   const isInitiatorRef = useRef(false);
   const offerCountRef = useRef(0);
+  const audioRetryRef = useRef(0);
 
   const signaling = useSignaling();
   const {
@@ -45,6 +46,7 @@ export default function HomePage() {
     onIceCandidate,
     onPeerDisconnected,
     onMatched,
+    refreshIceServers,
     iceServers,
   } = signaling;
 
@@ -81,6 +83,16 @@ export default function HomePage() {
       roomIdRef.current = data.roomId;
       isInitiatorRef.current = data.isInitiator;
       offerCountRef.current = 0;
+      audioRetryRef.current = 0;
+
+      const servers = await refreshIceServers();
+      if (servers.length) webrtcRef.current.updateIceServers(servers);
+
+      const stream = await webrtcRef.current.initLocalStream();
+      if (!stream) {
+        alert('Microphone access is required for audio calls. Allow the mic and try again.');
+        return;
+      }
 
       if (data.isInitiator) {
         offerCountRef.current = 1;
@@ -115,7 +127,28 @@ export default function HomePage() {
       setCallDuration(0);
       if (timerRef.current) clearInterval(timerRef.current);
     });
-  }, [onMatched, onOffer, onAnswer, onIceCandidate, onPeerDisconnected]);
+  }, [onMatched, onOffer, onAnswer, onIceCandidate, onPeerDisconnected, refreshIceServers]);
+
+  // Silent audio retry for initiator when ICE never connects (no UI button)
+  useEffect(() => {
+    if (connectionState !== 'matched') return;
+    if (webrtc.isConnected || webrtc.connectionQuality === 'excellent') return;
+
+    const timer = setInterval(() => {
+      if (webrtcRef.current.isConnected) return;
+      if (!isInitiatorRef.current || !roomIdRef.current) return;
+      if (audioRetryRef.current >= 2) return;
+
+      audioRetryRef.current += 1;
+      offerCountRef.current += 1;
+      const rid = roomIdRef.current;
+      void webrtcRef.current.startCallAsInitiator(rid, true).then((offer) => {
+        if (offer) sendOfferRef.current(rid, offer);
+      });
+    }, 10000);
+
+    return () => clearInterval(timer);
+  }, [connectionState, webrtc.isConnected, webrtc.connectionQuality]);
 
   // Initialize socket after handlers are registered
   useEffect(() => {
@@ -213,7 +246,9 @@ export default function HomePage() {
       case 'searching':
         return 'Finding a musician near you...';
       case 'matched':
-        return 'Connected — Jam away!';
+        return webrtc.isConnected
+          ? 'Connected — Jam away!'
+          : 'Establishing audio connection...';
       case 'reconnecting':
         return 'Reconnecting...';
       case 'error':
@@ -221,7 +256,7 @@ export default function HomePage() {
       default:
         return 'Select your interests and start matching';
     }
-  }, [connectionState]);
+  }, [connectionState, webrtc.isConnected]);
 
   return (
     <main className="h-[100dvh] w-full overflow-hidden relative flex flex-col">
@@ -276,7 +311,7 @@ export default function HomePage() {
                   sharedInterests={sharedInterests}
                   isSpeaking={isSpeaking}
                   peerSpeaking={peerSpeaking}
-                  connectionQuality="good"
+                  connectionQuality={webrtc.connectionQuality}
                   durationSeconds={callDuration}
                   needsAudioUnlock={webrtc.needsAudioUnlock}
                   onUnlockAudio={webrtc.unlockRemoteAudio}

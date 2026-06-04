@@ -36,13 +36,20 @@ export function mergeIceServers(servers: IceServerConfig[]): IceServerConfig[] {
   return hasTurn ? servers : [...servers, ...DEFAULT_TURN];
 }
 
+export function shouldUseTurnRelay(): boolean {
+  if (typeof window === 'undefined') return false;
+  const h = window.location.hostname;
+  return h !== 'localhost' && h !== '127.0.0.1';
+}
+
 export function buildRtcConfig(
   iceServers: IceServerConfig[],
   relayOnly = false
 ): RTCConfiguration {
+  const useRelay = relayOnly || shouldUseTurnRelay();
   return {
     iceServers: mergeIceServers(iceServers),
-    iceTransportPolicy: relayOnly ? 'relay' : 'all',
+    iceTransportPolicy: useRelay ? 'relay' : 'all',
     bundlePolicy: 'max-bundle',
     rtcpMuxPolicy: 'require',
     iceCandidatePoolSize: 10,

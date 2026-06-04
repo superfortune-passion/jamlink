@@ -27,6 +27,7 @@ interface UseSignalingReturn {
   onIceCandidate: (cb: (data: { roomId: string; candidate: RTCIceCandidateInit; from: string }) => void) => void;
   onPeerDisconnected: (cb: (reason: string) => void) => void;
   onMatched: (cb: (data: MatchedPayload) => void) => void;
+  refreshIceServers: () => Promise<IceServerConfig[]>;
   iceServers: IceServerConfig[];
 }
 
@@ -181,6 +182,12 @@ export function useSignaling(): UseSignalingReturn {
     matchedCbRef.current = cb;
   }, []);
 
+  const refreshIceServers = useCallback(async () => {
+    const servers = await fetchIceServers();
+    if (servers.length) setIceServers(servers);
+    return servers;
+  }, []);
+
   return {
     connectionState,
     onlineCount,
@@ -204,6 +211,7 @@ export function useSignaling(): UseSignalingReturn {
     onIceCandidate,
     onPeerDisconnected,
     onMatched,
+    refreshIceServers,
     iceServers,
   };
 }

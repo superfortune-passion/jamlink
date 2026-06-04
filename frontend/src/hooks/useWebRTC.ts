@@ -36,6 +36,8 @@ interface UseWebRTCReturn {
   handleIceCandidate: (candidate: RTCIceCandidateInit) => Promise<void>;
   unlockRemoteAudio: () => Promise<void>;
   toggleMute: () => void;
+  updateIceServers: (servers: IceServerConfig[]) => void;
+
   endCall: () => void;
   remoteAudioRef: React.RefObject<HTMLAudioElement>;
 }
@@ -138,6 +140,7 @@ export function useWebRTC({ iceServers, onIceCandidate }: UseWebRTCOptions): Use
       const config = buildRtcConfig(iceServersRef.current, relayOnly);
       const pc = createPeerConnection(config);
       pcRef.current = pc;
+      setConnectionQuality('good');
 
       stream.getTracks().forEach((track) => {
         pc.addTrack(track, stream);
@@ -267,6 +270,10 @@ export function useWebRTC({ iceServers, onIceCandidate }: UseWebRTCOptions): Use
     });
   }, []);
 
+  const updateIceServers = useCallback((servers: IceServerConfig[]) => {
+    if (servers.length) iceServersRef.current = servers;
+  }, []);
+
   useEffect(() => {
     if (remoteStream && remoteAudioRef.current) {
       void attachRemoteAudio(remoteStream, remoteAudioRef.current).then((ok) => {
@@ -296,6 +303,7 @@ export function useWebRTC({ iceServers, onIceCandidate }: UseWebRTCOptions): Use
     handleIceCandidate,
     unlockRemoteAudio,
     toggleMute,
+    updateIceServers,
     endCall,
     remoteAudioRef,
   };

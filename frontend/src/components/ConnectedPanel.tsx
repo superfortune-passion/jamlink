@@ -92,6 +92,16 @@ function ConnectedPanelComponent({
         >
           {connectionQuality}
         </span>
+        {connectionQuality === 'unknown' && (
+          <span className="block text-zinc-500 mt-1">
+            Match found — linking audio between browsers…
+          </span>
+        )}
+        {connectionQuality === 'poor' && (
+          <span className="block text-amber-500/80 mt-1">
+            Audio link unstable — try skip or check mic on both devices
+          </span>
+        )}
       </p>
     </motion.div>
   );
