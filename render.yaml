@@ -1,0 +1,30 @@
+# Render Blueprint — deploy backend from GitHub
+# Dashboard: New → Blueprint → connect repo (uses this file)
+services:
+  - type: web
+    name: jamlink-api
+    runtime: node
+    rootDir: backend
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: CORS_ORIGIN
+        sync: false
+      - key: STUN_SERVERS
+        value: stun:stun.l.google.com:19302,stun:freeturn.net:3478
+      - key: TURN_URL
+        value: turn:freeturn.net:3478
+      - key: TURN_USERNAME
+        value: free
+      - key: TURN_CREDENTIAL
+        value: free
+      - key: MAX_SEARCHES_PER_MINUTE
+        value: "10"
+      - key: MAX_SKIPS_PER_MINUTE
+        value: "20"
+      - key: MAX_REPORTS_PER_HOUR
+        value: "5"

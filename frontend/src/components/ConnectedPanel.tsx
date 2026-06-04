@@ -1,0 +1,108 @@
+'use client';
+
+import { memo } from 'react';
+import { motion } from 'framer-motion';
+import { getInterestTitle } from '@/lib/interests';
+
+interface ConnectedPanelProps {
+  sharedInterests: string[];
+  isSpeaking: boolean;
+  peerSpeaking: boolean;
+  connectionQuality: string;
+  durationSeconds: number;
+}
+
+function formatDuration(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+}
+
+function ConnectedPanelComponent({
+  sharedInterests,
+  isSpeaking,
+  peerSpeaking,
+  connectionQuality,
+  durationSeconds,
+}: ConnectedPanelProps) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="w-full max-w-md mx-auto glass rounded-2xl p-4 sm:p-5 space-y-4"
+    >
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-xs text-zinc-500 uppercase tracking-wider">Connected with</p>
+          <p className="font-display font-semibold text-lg text-white">Anonymous Musician</p>
+        </div>
+        <div className="text-right">
+          <p className="text-xs text-zinc-500">Duration</p>
+          <p className="font-mono text-lg text-cyan-400">{formatDuration(durationSeconds)}</p>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-4">
+        <VoiceActivity label="You" active={isSpeaking} color="violet" />
+        <VoiceActivity label="Peer" active={peerSpeaking} color="cyan" />
+      </div>
+
+      {sharedInterests.length > 0 && (
+        <div>
+          <p className="text-xs text-zinc-500 mb-2">Shared interests</p>
+          <div className="flex flex-wrap gap-1.5">
+            {sharedInterests.map((id) => (
+              <span
+                key={id}
+                className="px-2.5 py-1 rounded-full text-xs bg-violet-500/20 text-violet-200 border border-violet-500/30"
+              >
+                {getInterestTitle(id)}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <p className="text-xs text-zinc-600 text-center">
+        Connection: <span className="text-zinc-400 capitalize">{connectionQuality}</span>
+      </p>
+    </motion.div>
+  );
+}
+
+function VoiceActivity({
+  label,
+  active,
+  color,
+}: {
+  label: string;
+  active: boolean;
+  color: 'violet' | 'cyan';
+}) {
+  const bg = color === 'violet' ? 'bg-violet-500' : 'bg-cyan-500';
+
+  return (
+    <div className="flex-1 flex flex-col items-center gap-1">
+      <div className="flex items-end gap-0.5 h-6">
+        {[0, 1, 2].map((i) => (
+          <motion.div
+            key={i}
+            className={`w-1 rounded-full ${bg}`}
+            animate={{
+              height: active ? [4, 12 + i * 4, 6] : 4,
+              opacity: active ? 1 : 0.3,
+            }}
+            transition={{
+              duration: 0.4,
+              repeat: active ? Infinity : 0,
+              delay: i * 0.1,
+            }}
+          />
+        ))}
+      </div>
+      <span className="text-xs text-zinc-500">{label}</span>
+    </div>
+  );
+}
+
+export const ConnectedPanel = memo(ConnectedPanelComponent);
