@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { type Request, type Response } from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
@@ -89,7 +89,7 @@ registerSignalingHandlers({
   getIceServers: parseIceServers,
 });
 
-app.get('/health', (_req, res) => {
+app.get('/health', (_req: Request, res: Response) => {
   res.json({
     status: 'ok',
     uptime: process.uptime(),
@@ -100,11 +100,11 @@ app.get('/health', (_req, res) => {
   });
 });
 
-app.get('/api/ice-servers', (_req, res) => {
+app.get('/api/ice-servers', (_req: Request, res: Response) => {
   res.json({ iceServers: parseIceServers() });
 });
 
-app.get('/api/stats', (_req, res) => {
+app.get('/api/stats', (_req: Request, res: Response) => {
   res.json({
     online: io.engine.clientsCount,
     searching: getSearchingCount(matchQueue),
