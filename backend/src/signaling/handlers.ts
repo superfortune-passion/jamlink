@@ -17,6 +17,40 @@ interface SignalingDeps {
 
 const sessions = new Map<string, UserSession>();
 
+/** Reliable room → peer mapping for WebRTC signal relay */
+const activeRooms = new Map<string, { peerA: string; peerB: string }>();
+
+function registerRoom(roomId: string, peerA: string, peerB: string): void {
+  activeRooms.set(roomId, { peerA, peerB });
+}
+
+function clearRoom(roomId: string | null): void {
+  if (roomId) activeRooms.delete(roomId);
+}
+
+function getPeerInRoom(roomId: string, fromSocketId: string): string | null {
+  const room = activeRooms.get(roomId);
+  if (!room) return null;
+  if (room.peerA === fromSocketId) return room.peerB;
+  if (room.peerB === fromSocketId) return room.peerA;
+  return null;
+}
+
+function relaySignal(
+  io: Server,
+  roomId: string,
+  fromSocketId: string,
+  event: 'offer' | 'answer' | 'ice-candidate',
+  payload: Record<string, unknown>
+): boolean {
+  const target = getPeerInRoom(roomId, fromSocketId);
+  if (target) {
+    io.to(target).emit(event, { ...payload, from: fromSocketId });
+    return true;
+  }
+  return false;
+}
+
 function getSession(socket: Socket): UserSession {
   let session = sessions.get(socket.id);
   if (!session) {
@@ -117,6 +151,7 @@ export function registerSignalingHandlers(deps: SignalingDeps): void {
           peerB.currentPeerId = match.peerA;
           peerA.currentRoomId = match.roomId;
           peerB.currentRoomId = match.roomId;
+          registerRoom(match.roomId, match.peerA, match.peerB);
 
           const payloadA = {
             roomId: match.roomId,
@@ -155,10 +190,13 @@ export function registerSignalingHandlers(deps: SignalingDeps): void {
         notifyPeerDisconnect(io, peerId, 'peer-skipped');
         const peer = sessions.get(peerId);
         if (peer) {
+          clearRoom(session.currentRoomId);
           peer.currentPeerId = null;
           peer.currentRoomId = null;
         }
       }
+
+      clearRoom(session.currentRoomId);
 
       session.currentPeerId = null;
       session.currentRoomId = null;
@@ -178,6 +216,7 @@ export function registerSignalingHandlers(deps: SignalingDeps): void {
           peerB.currentPeerId = match.peerA;
           peerA.currentRoomId = match.roomId;
           peerB.currentRoomId = match.roomId;
+          registerRoom(match.roomId, match.peerA, match.peerB);
 
           io.to(match.peerA).emit('matched', {
             roomId: match.roomId,
@@ -196,31 +235,55 @@ export function registerSignalingHandlers(deps: SignalingDeps): void {
     });
 
     socket.on('offer', (data: { roomId: string; sdp: SessionDescriptionInit }) => {
-      const peerId = session.currentPeerId;
-      if (peerId && data.roomId === session.currentRoomId) {
-        io.to(peerId).emit('offer', { roomId: data.roomId, sdp: data.sdp, from: socket.id });
-      } else {
-        console.warn('[signaling] offer dropped', { socketId: socket.id, peerId, roomId: data.roomId, sessionRoom: session.currentRoomId });
+      const relayed = relaySignal(io, data.roomId, socket.id, 'offer', {
+        roomId: data.roomId,
+        sdp: data.sdp,
+      });
+      if (!relayed) {
+        const peerId = session.currentPeerId;
+        if (peerId && data.roomId === session.currentRoomId) {
+          io.to(peerId).emit('offer', { roomId: data.roomId, sdp: data.sdp, from: socket.id });
+        } else {
+          console.warn('[signaling] offer dropped', {
+            socketId: socket.id,
+            roomId: data.roomId,
+          });
+        }
       }
     });
 
     socket.on('answer', (data: { roomId: string; sdp: SessionDescriptionInit }) => {
-      const peerId = session.currentPeerId;
-      if (peerId && data.roomId === session.currentRoomId) {
-        io.to(peerId).emit('answer', { roomId: data.roomId, sdp: data.sdp, from: socket.id });
-      } else {
-        console.warn('[signaling] answer dropped', { socketId: socket.id, peerId, roomId: data.roomId, sessionRoom: session.currentRoomId });
+      const relayed = relaySignal(io, data.roomId, socket.id, 'answer', {
+        roomId: data.roomId,
+        sdp: data.sdp,
+      });
+      if (!relayed) {
+        const peerId = session.currentPeerId;
+        if (peerId && data.roomId === session.currentRoomId) {
+          io.to(peerId).emit('answer', { roomId: data.roomId, sdp: data.sdp, from: socket.id });
+        } else {
+          console.warn('[signaling] answer dropped', {
+            socketId: socket.id,
+            roomId: data.roomId,
+          });
+        }
       }
     });
 
     socket.on('ice-candidate', (data: { roomId: string; candidate: IceCandidateInit }) => {
-      const peerId = session.currentPeerId;
-      if (peerId && data.roomId === session.currentRoomId) {
-        io.to(peerId).emit('ice-candidate', {
-          roomId: data.roomId,
-          candidate: data.candidate,
-          from: socket.id,
-        });
+      const relayed = relaySignal(io, data.roomId, socket.id, 'ice-candidate', {
+        roomId: data.roomId,
+        candidate: data.candidate,
+      });
+      if (!relayed) {
+        const peerId = session.currentPeerId;
+        if (peerId && data.roomId === session.currentRoomId) {
+          io.to(peerId).emit('ice-candidate', {
+            roomId: data.roomId,
+            candidate: data.candidate,
+            from: socket.id,
+          });
+        }
       }
     });
 
@@ -297,11 +360,13 @@ export function registerSignalingHandlers(deps: SignalingDeps): void {
           peer.currentRoomId = null;
         }
       }
+      clearRoom(session.currentRoomId);
       session.currentPeerId = null;
       session.currentRoomId = null;
     });
 
     socket.on('disconnect', () => {
+      clearRoom(session.currentRoomId);
       matchQueue.remove(socket.id);
       jamManager.removeFromQueue(socket.id);
 

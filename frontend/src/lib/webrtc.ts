@@ -10,6 +10,21 @@ export const DEFAULT_STUN: IceServerConfig[] = [
 export const DEFAULT_TURN: IceServerConfig[] = [
   { urls: 'turn:freeturn.net:3478', username: 'free', credential: 'free' },
   { urls: 'turns:freeturn.net:5349', username: 'free', credential: 'free' },
+  {
+    urls: 'turn:openrelay.metered.ca:80',
+    username: 'openrelayproject',
+    credential: 'openrelayproject',
+  },
+  {
+    urls: 'turn:openrelay.metered.ca:443',
+    username: 'openrelayproject',
+    credential: 'openrelayproject',
+  },
+  {
+    urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+    username: 'openrelayproject',
+    credential: 'openrelayproject',
+  },
 ];
 
 export function mergeIceServers(servers: IceServerConfig[]): IceServerConfig[] {
@@ -94,6 +109,23 @@ export function createPeerConnection(config: RTCConfiguration): RTCPeerConnectio
   return pc;
 }
 
+/** Wait for ICE gathering so candidates are embedded in SDP (fixes lost trickle ICE over socket) */
+export function waitForIceGathering(pc: RTCPeerConnection, timeoutMs = 8000): Promise<void> {
+  if (pc.iceGatheringState === 'complete') return Promise.resolve();
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      pc.removeEventListener('icegatheringstatechange', onChange);
+      resolve();
+    };
+    const onChange = () => {
+      if (pc.iceGatheringState === 'complete') done();
+    };
+    const timer = setTimeout(done, timeoutMs);
+    pc.addEventListener('icegatheringstatechange', onChange);
+  });
+}
+
 export async function createOffer(
   pc: RTCPeerConnection,
   iceRestart = false
@@ -104,13 +136,15 @@ export async function createOffer(
     iceRestart,
   });
   await pc.setLocalDescription(offer);
-  return offer;
+  await waitForIceGathering(pc);
+  return pc.localDescription?.toJSON() ?? offer;
 }
 
 export async function createAnswer(pc: RTCPeerConnection): Promise<RTCSessionDescriptionInit> {
   const answer = await pc.createAnswer();
   await pc.setLocalDescription(answer);
-  return answer;
+  await waitForIceGathering(pc);
+  return pc.localDescription?.toJSON() ?? answer;
 }
 
 export async function attachRemoteAudio(

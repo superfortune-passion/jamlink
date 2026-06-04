@@ -46,7 +46,17 @@ function parseIceServers(): IceServerConfig[] {
   } else {
     servers.push(
       { urls: 'turn:freeturn.net:3478', username: 'free', credential: 'free' },
-      { urls: 'turns:freeturn.net:5349', username: 'free', credential: 'free' }
+      { urls: 'turns:freeturn.net:5349', username: 'free', credential: 'free' },
+      {
+        urls: 'turn:openrelay.metered.ca:80',
+        username: 'openrelayproject',
+        credential: 'openrelayproject',
+      },
+      {
+        urls: 'turn:openrelay.metered.ca:443',
+        username: 'openrelayproject',
+        credential: 'openrelayproject',
+      }
     );
   }
 

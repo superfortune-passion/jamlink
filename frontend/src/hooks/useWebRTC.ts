@@ -26,8 +26,12 @@ interface UseWebRTCReturn {
   needsAudioUnlock: boolean;
   connectionQuality: 'excellent' | 'good' | 'poor' | 'unknown';
   initLocalStream: () => Promise<MediaStream | null>;
-  startCallAsInitiator: (roomId: string, iceRestart?: boolean) => Promise<RTCSessionDescriptionInit | null>;
-  handleOffer: (sdp: RTCSessionDescriptionInit, roomId: string) => Promise<RTCSessionDescriptionInit>;
+  startCallAsInitiator: (roomId: string, forceRelay?: boolean) => Promise<RTCSessionDescriptionInit | null>;
+  handleOffer: (
+    sdp: RTCSessionDescriptionInit,
+    roomId: string,
+    forceRelay?: boolean
+  ) => Promise<RTCSessionDescriptionInit>;
   handleAnswer: (sdp: RTCSessionDescriptionInit) => Promise<void>;
   handleIceCandidate: (candidate: RTCIceCandidateInit) => Promise<void>;
   unlockRemoteAudio: () => Promise<void>;
@@ -55,7 +59,6 @@ export function useWebRTC({ iceServers, onIceCandidate }: UseWebRTCOptions): Use
   const iceServersRef = useRef(iceServers);
   const onIceCandidateRef = useRef(onIceCandidate);
   const localStreamRef = useRef<MediaStream | null>(null);
-  const relayRetryRef = useRef(false);
 
   iceServersRef.current = iceServers;
   onIceCandidateRef.current = onIceCandidate;
@@ -72,7 +75,6 @@ export function useWebRTC({ iceServers, onIceCandidate }: UseWebRTCOptions): Use
     }
     pendingCandidatesRef.current = [];
     activeRoomIdRef.current = null;
-    relayRetryRef.current = false;
     setRemoteStream(null);
     setIsConnected(false);
     setNeedsAudioUnlock(false);
@@ -132,7 +134,6 @@ export function useWebRTC({ iceServers, onIceCandidate }: UseWebRTCOptions): Use
     (stream: MediaStream, roomId: string, relayOnly = false) => {
       cleanupPeerConnection();
       activeRoomIdRef.current = roomId;
-      relayRetryRef.current = false;
 
       const config = buildRtcConfig(iceServersRef.current, relayOnly);
       const pc = createPeerConnection(config);
@@ -171,16 +172,13 @@ export function useWebRTC({ iceServers, onIceCandidate }: UseWebRTCOptions): Use
         if (state === 'connected' || state === 'completed') {
           setConnectionQuality('excellent');
           setIsConnected(true);
-        } else if (state === 'checking') {
+        } else if (state === 'checking' || state === 'new') {
           setConnectionQuality('good');
         } else if (state === 'disconnected') {
           setConnectionQuality('poor');
         } else if (state === 'failed') {
           setConnectionQuality('poor');
-          if (!relayRetryRef.current && pc.restartIce) {
-            relayRetryRef.current = true;
-            void pc.restartIce();
-          }
+          setIsConnected(false);
         }
       };
 
@@ -190,16 +188,12 @@ export function useWebRTC({ iceServers, onIceCandidate }: UseWebRTCOptions): Use
   );
 
   const startCallAsInitiator = useCallback(
-    async (roomId: string, iceRestart = false): Promise<RTCSessionDescriptionInit | null> => {
+    async (roomId: string, forceRelay = false): Promise<RTCSessionDescriptionInit | null> => {
       const stream = await initLocalStream();
       if (!stream) return null;
 
-      let pc = pcRef.current;
-      if (!pc || activeRoomIdRef.current !== roomId) {
-        pc = setupPeerConnection(stream, roomId);
-      }
-
-      const offer = await createOffer(pc, iceRestart);
+      const pc = setupPeerConnection(stream, roomId, forceRelay);
+      const offer = await createOffer(pc);
       await flushPendingCandidates();
       return offer;
     },
@@ -207,11 +201,15 @@ export function useWebRTC({ iceServers, onIceCandidate }: UseWebRTCOptions): Use
   );
 
   const handleOffer = useCallback(
-    async (sdp: RTCSessionDescriptionInit, roomId: string): Promise<RTCSessionDescriptionInit> => {
+    async (
+      sdp: RTCSessionDescriptionInit,
+      roomId: string,
+      forceRelay = false
+    ): Promise<RTCSessionDescriptionInit> => {
       const stream = await initLocalStream();
       if (!stream) throw new Error('No local stream');
 
-      const pc = setupPeerConnection(stream, roomId);
+      const pc = setupPeerConnection(stream, roomId, forceRelay);
       await pc.setRemoteDescription(new RTCSessionDescription(sdp));
       await flushPendingCandidates();
 
@@ -233,8 +231,13 @@ export function useWebRTC({ iceServers, onIceCandidate }: UseWebRTCOptions): Use
   );
 
   const handleIceCandidate = useCallback(async (candidate: RTCIceCandidateInit) => {
+    if (!candidate.candidate) return;
     const pc = pcRef.current;
-    if (!pc || !pc.remoteDescription) {
+    if (!pc) {
+      pendingCandidatesRef.current.push(candidate);
+      return;
+    }
+    if (!pc.remoteDescription) {
       pendingCandidatesRef.current.push(candidate);
       return;
     }

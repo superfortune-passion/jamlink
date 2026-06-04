@@ -25,6 +25,7 @@ export default function HomePage() {
   const roomIdRef = useRef<string | null>(null);
   const isInitiatorRef = useRef(false);
   const retryCountRef = useRef(0);
+  const offerCountRef = useRef(0);
 
   const signaling = useSignaling();
   const {
@@ -82,7 +83,9 @@ export default function HomePage() {
     if (!rid || !isInitiatorRef.current) return;
     setIsRetryingAudio(true);
     try {
-      const offer = await webrtcRef.current.startCallAsInitiator(rid, true);
+      const forceRelay = retryCountRef.current >= 1;
+      offerCountRef.current += 1;
+      const offer = await webrtcRef.current.startCallAsInitiator(rid, forceRelay);
       if (offer) sendOfferRef.current(rid, offer);
     } finally {
       setIsRetryingAudio(false);
@@ -95,8 +98,10 @@ export default function HomePage() {
       roomIdRef.current = data.roomId;
       isInitiatorRef.current = data.isInitiator;
       retryCountRef.current = 0;
+      offerCountRef.current = 0;
 
       if (data.isInitiator) {
+        offerCountRef.current = 1;
         const offer = await webrtcRef.current.startCallAsInitiator(data.roomId);
         if (offer) sendOfferRef.current(data.roomId, offer);
       }
@@ -104,8 +109,10 @@ export default function HomePage() {
 
     onOffer(async (data) => {
       roomIdRef.current = data.roomId;
+      offerCountRef.current += 1;
+      const forceRelay = offerCountRef.current >= 2;
       try {
-        const answer = await webrtcRef.current.handleOffer(data.sdp, data.roomId);
+        const answer = await webrtcRef.current.handleOffer(data.sdp, data.roomId, forceRelay);
         sendAnswerRef.current(data.roomId, answer);
       } catch (err) {
         console.error('Failed to handle offer:', err);
@@ -148,7 +155,6 @@ export default function HomePage() {
       if (webrtcRef.current.connectionQuality !== 'unknown') return;
       if (!isInitiatorRef.current || !roomIdRef.current) return;
       if (retryCountRef.current >= 3) return;
-
       retryCountRef.current += 1;
       void retryAudioConnection();
     }, 7000);
@@ -242,7 +248,9 @@ export default function HomePage() {
       case 'searching':
         return 'Finding a musician near you...';
       case 'matched':
-        return webrtc.isConnected ? 'Connected — Jam away!' : 'Establishing audio connection...';
+        return webrtc.isConnected
+          ? 'Connected — Jam away!'
+          : 'Establishing audio connection...';
       case 'reconnecting':
         return 'Reconnecting...';
       case 'error':
