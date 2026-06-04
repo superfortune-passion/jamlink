@@ -19,12 +19,10 @@ export default function HomePage() {
   const [showReportModal, setShowReportModal] = useState(false);
   const [callDuration, setCallDuration] = useState(0);
   const [micReady, setMicReady] = useState(false);
-  const [isRetryingAudio, setIsRetryingAudio] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const initializedRef = useRef(false);
   const roomIdRef = useRef<string | null>(null);
   const isInitiatorRef = useRef(false);
-  const retryCountRef = useRef(0);
   const offerCountRef = useRef(0);
 
   const signaling = useSignaling();
@@ -33,7 +31,6 @@ export default function HomePage() {
     onlineCount,
     sharedInterests,
     roomId,
-    isInitiator,
     error,
     connect,
     search,
@@ -78,26 +75,11 @@ export default function HomePage() {
   sendOfferRef.current = sendOffer;
   sendAnswerRef.current = sendAnswer;
 
-  const retryAudioConnection = useCallback(async () => {
-    const rid = roomIdRef.current;
-    if (!rid || !isInitiatorRef.current) return;
-    setIsRetryingAudio(true);
-    try {
-      const forceRelay = retryCountRef.current >= 1;
-      offerCountRef.current += 1;
-      const offer = await webrtcRef.current.startCallAsInitiator(rid, forceRelay);
-      if (offer) sendOfferRef.current(rid, offer);
-    } finally {
-      setIsRetryingAudio(false);
-    }
-  }, []);
-
   // WebRTC signaling handlers — register BEFORE connect()
   useEffect(() => {
     onMatched(async (data) => {
       roomIdRef.current = data.roomId;
       isInitiatorRef.current = data.isInitiator;
-      retryCountRef.current = 0;
       offerCountRef.current = 0;
 
       if (data.isInitiator) {
@@ -130,7 +112,6 @@ export default function HomePage() {
     onPeerDisconnected(() => {
       webrtcRef.current.endCall();
       roomIdRef.current = null;
-      retryCountRef.current = 0;
       setCallDuration(0);
       if (timerRef.current) clearInterval(timerRef.current);
     });
@@ -145,22 +126,6 @@ export default function HomePage() {
       fetchOnlineCount();
     }
   }, [connect]);
-
-  // Auto-retry audio when stuck on Unknown (initiator only, max 3 times)
-  useEffect(() => {
-    if (connectionState !== 'matched') return;
-    if (webrtc.connectionQuality !== 'unknown') return;
-
-    const timer = setInterval(() => {
-      if (webrtcRef.current.connectionQuality !== 'unknown') return;
-      if (!isInitiatorRef.current || !roomIdRef.current) return;
-      if (retryCountRef.current >= 3) return;
-      retryCountRef.current += 1;
-      void retryAudioConnection();
-    }, 7000);
-
-    return () => clearInterval(timer);
-  }, [connectionState, webrtc.connectionQuality, retryAudioConnection]);
 
   // Call duration timer — runs once matched (even while ICE is still connecting)
   useEffect(() => {
@@ -248,9 +213,7 @@ export default function HomePage() {
       case 'searching':
         return 'Finding a musician near you...';
       case 'matched':
-        return webrtc.isConnected
-          ? 'Connected — Jam away!'
-          : 'Establishing audio connection...';
+        return 'Connected — Jam away!';
       case 'reconnecting':
         return 'Reconnecting...';
       case 'error':
@@ -258,7 +221,7 @@ export default function HomePage() {
       default:
         return 'Select your interests and start matching';
     }
-  }, [connectionState, webrtc.isConnected]);
+  }, [connectionState]);
 
   return (
     <main className="h-[100dvh] w-full overflow-hidden relative flex flex-col">
@@ -313,12 +276,10 @@ export default function HomePage() {
                   sharedInterests={sharedInterests}
                   isSpeaking={isSpeaking}
                   peerSpeaking={peerSpeaking}
-                  connectionQuality={webrtc.connectionQuality}
+                  connectionQuality="good"
                   durationSeconds={callDuration}
                   needsAudioUnlock={webrtc.needsAudioUnlock}
                   onUnlockAudio={webrtc.unlockRemoteAudio}
-                  onRetryAudio={isInitiator ? retryAudioConnection : undefined}
-                  isRetrying={isRetryingAudio}
                 />
                 <div className="mt-4">
                   <CallControls
