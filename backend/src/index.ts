@@ -16,7 +16,11 @@ import type { IceServerConfig } from './types';
 dotenv.config();
 
 const PORT = parseInt(process.env.PORT ?? '3001', 10);
-const CORS_ORIGIN = process.env.CORS_ORIGIN ?? 'http://localhost:3000';
+const CORS_ORIGIN = (process.env.CORS_ORIGIN ?? 'http://localhost:3000')
+  .split(',')
+  .map((o) => o.trim().replace(/\/+$/, ''))
+  .filter(Boolean)
+  .join(',');
 
 function parseIceServers(): IceServerConfig[] {
   const servers: IceServerConfig[] = [];
