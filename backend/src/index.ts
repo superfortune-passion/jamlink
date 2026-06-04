@@ -38,11 +38,16 @@ function parseIceServers(): IceServerConfig[] {
       if (trimmed) {
         servers.push({
           urls: trimmed,
-          username: process.env.TURN_USERNAME,
-          credential: process.env.TURN_CREDENTIAL,
+          username: process.env.TURN_USERNAME ?? 'free',
+          credential: process.env.TURN_CREDENTIAL ?? 'free',
         });
       }
     });
+  } else {
+    servers.push(
+      { urls: 'turn:freeturn.net:3478', username: 'free', credential: 'free' },
+      { urls: 'turns:freeturn.net:5349', username: 'free', credential: 'free' }
+    );
   }
 
   return servers;

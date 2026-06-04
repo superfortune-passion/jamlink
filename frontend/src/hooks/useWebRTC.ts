@@ -26,7 +26,7 @@ interface UseWebRTCReturn {
   needsAudioUnlock: boolean;
   connectionQuality: 'excellent' | 'good' | 'poor' | 'unknown';
   initLocalStream: () => Promise<MediaStream | null>;
-  startCallAsInitiator: (roomId: string) => Promise<RTCSessionDescriptionInit | null>;
+  startCallAsInitiator: (roomId: string, iceRestart?: boolean) => Promise<RTCSessionDescriptionInit | null>;
   handleOffer: (sdp: RTCSessionDescriptionInit, roomId: string) => Promise<RTCSessionDescriptionInit>;
   handleAnswer: (sdp: RTCSessionDescriptionInit) => Promise<void>;
   handleIceCandidate: (candidate: RTCIceCandidateInit) => Promise<void>;
@@ -190,12 +190,16 @@ export function useWebRTC({ iceServers, onIceCandidate }: UseWebRTCOptions): Use
   );
 
   const startCallAsInitiator = useCallback(
-    async (roomId: string): Promise<RTCSessionDescriptionInit | null> => {
+    async (roomId: string, iceRestart = false): Promise<RTCSessionDescriptionInit | null> => {
       const stream = await initLocalStream();
       if (!stream) return null;
 
-      const pc = setupPeerConnection(stream, roomId);
-      const offer = await createOffer(pc);
+      let pc = pcRef.current;
+      if (!pc || activeRoomIdRef.current !== roomId) {
+        pc = setupPeerConnection(stream, roomId);
+      }
+
+      const offer = await createOffer(pc, iceRestart);
       await flushPendingCandidates();
       return offer;
     },

@@ -12,6 +12,8 @@ interface ConnectedPanelProps {
   durationSeconds: number;
   needsAudioUnlock?: boolean;
   onUnlockAudio?: () => void;
+  onRetryAudio?: () => void;
+  isRetrying?: boolean;
 }
 
 function formatDuration(seconds: number): string {
@@ -28,6 +30,8 @@ function ConnectedPanelComponent({
   durationSeconds,
   needsAudioUnlock,
   onUnlockAudio,
+  onRetryAudio,
+  isRetrying,
 }: ConnectedPanelProps) {
   return (
     <motion.div
@@ -74,6 +78,17 @@ function ConnectedPanelComponent({
           className="w-full py-2.5 px-4 rounded-xl bg-cyan-600/30 border border-cyan-500/50 text-cyan-200 text-sm font-medium hover:bg-cyan-600/40 transition-colors animate-pulse"
         >
           🔊 Tap to enable peer audio
+        </button>
+      )}
+
+      {connectionQuality === 'unknown' && onRetryAudio && (
+        <button
+          type="button"
+          onClick={onRetryAudio}
+          disabled={isRetrying}
+          className="w-full py-2.5 px-4 rounded-xl bg-violet-600/30 border border-violet-500/50 text-violet-200 text-sm font-medium hover:bg-violet-600/40 transition-colors disabled:opacity-50"
+        >
+          {isRetrying ? 'Reconnecting audio…' : '🔄 Retry audio connection'}
         </button>
       )}
 

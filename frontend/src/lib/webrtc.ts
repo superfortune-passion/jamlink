@@ -94,10 +94,14 @@ export function createPeerConnection(config: RTCConfiguration): RTCPeerConnectio
   return pc;
 }
 
-export async function createOffer(pc: RTCPeerConnection): Promise<RTCSessionDescriptionInit> {
+export async function createOffer(
+  pc: RTCPeerConnection,
+  iceRestart = false
+): Promise<RTCSessionDescriptionInit> {
   const offer = await pc.createOffer({
     offerToReceiveAudio: true,
     offerToReceiveVideo: false,
+    iceRestart,
   });
   await pc.setLocalDescription(offer);
   return offer;

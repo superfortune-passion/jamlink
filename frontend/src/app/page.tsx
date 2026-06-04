@@ -12,15 +12,19 @@ import { ReportModal } from '@/components/ReportModal';
 import { useSignaling } from '@/hooks/useSignaling';
 import { useWebRTC } from '@/hooks/useWebRTC';
 import { useAudioAnalyser } from '@/hooks/useAudioAnalyser';
-import { fetchOnlineCount } from '@/lib/socket';
+import { fetchOnlineCount, fetchIceServers } from '@/lib/socket';
 
 export default function HomePage() {
   const [selectedInterests, setSelectedInterests] = useState<string[]>([]);
   const [showReportModal, setShowReportModal] = useState(false);
   const [callDuration, setCallDuration] = useState(0);
   const [micReady, setMicReady] = useState(false);
+  const [isRetryingAudio, setIsRetryingAudio] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const initializedRef = useRef(false);
+  const roomIdRef = useRef<string | null>(null);
+  const isInitiatorRef = useRef(false);
+  const retryCountRef = useRef(0);
 
   const signaling = useSignaling();
   const {
@@ -68,35 +72,38 @@ export default function HomePage() {
   const isConnected = connectionState === 'matched' && webrtc.isConnected;
   const showConnectedUI = connectionState === 'matched';
 
-  // Initialize socket on mount
-  useEffect(() => {
-    if (!initializedRef.current) {
-      initializedRef.current = true;
-      connect();
-      fetchOnlineCount().then((count) => {
-        if (count > 0) {
-          // Will be overwritten by presence-update
-        }
-      });
-    }
-  }, [connect]);
-
   const sendOfferRef = useRef(sendOffer);
   const sendAnswerRef = useRef(sendAnswer);
   sendOfferRef.current = sendOffer;
   sendAnswerRef.current = sendAnswer;
 
-  // WebRTC signaling handlers
+  const retryAudioConnection = useCallback(async () => {
+    const rid = roomIdRef.current;
+    if (!rid || !isInitiatorRef.current) return;
+    setIsRetryingAudio(true);
+    try {
+      const offer = await webrtcRef.current.startCallAsInitiator(rid, true);
+      if (offer) sendOfferRef.current(rid, offer);
+    } finally {
+      setIsRetryingAudio(false);
+    }
+  }, []);
+
+  // WebRTC signaling handlers — register BEFORE connect()
   useEffect(() => {
     onMatched(async (data) => {
+      roomIdRef.current = data.roomId;
+      isInitiatorRef.current = data.isInitiator;
+      retryCountRef.current = 0;
+
       if (data.isInitiator) {
         const offer = await webrtcRef.current.startCallAsInitiator(data.roomId);
         if (offer) sendOfferRef.current(data.roomId, offer);
       }
-      // Non-initiator: wait for offer event — do NOT touch peer connection here
     });
 
     onOffer(async (data) => {
+      roomIdRef.current = data.roomId;
       try {
         const answer = await webrtcRef.current.handleOffer(data.sdp, data.roomId);
         sendAnswerRef.current(data.roomId, answer);
@@ -115,10 +122,39 @@ export default function HomePage() {
 
     onPeerDisconnected(() => {
       webrtcRef.current.endCall();
+      roomIdRef.current = null;
+      retryCountRef.current = 0;
       setCallDuration(0);
       if (timerRef.current) clearInterval(timerRef.current);
     });
   }, [onMatched, onOffer, onAnswer, onIceCandidate, onPeerDisconnected]);
+
+  // Initialize socket after handlers are registered
+  useEffect(() => {
+    if (!initializedRef.current) {
+      initializedRef.current = true;
+      connect();
+      fetchIceServers();
+      fetchOnlineCount();
+    }
+  }, [connect]);
+
+  // Auto-retry audio when stuck on Unknown (initiator only, max 3 times)
+  useEffect(() => {
+    if (connectionState !== 'matched') return;
+    if (webrtc.connectionQuality !== 'unknown') return;
+
+    const timer = setInterval(() => {
+      if (webrtcRef.current.connectionQuality !== 'unknown') return;
+      if (!isInitiatorRef.current || !roomIdRef.current) return;
+      if (retryCountRef.current >= 3) return;
+
+      retryCountRef.current += 1;
+      void retryAudioConnection();
+    }, 7000);
+
+    return () => clearInterval(timer);
+  }, [connectionState, webrtc.connectionQuality, retryAudioConnection]);
 
   // Call duration timer — runs once matched (even while ICE is still connecting)
   useEffect(() => {
@@ -140,9 +176,10 @@ export default function HomePage() {
   }, []);
 
   const handleStartMatching = useCallback(async () => {
+    await fetchIceServers();
     const stream = await webrtc.initLocalStream();
     if (!stream) {
-      alert('Microphone access is required to match with other musicians.');
+      alert('Microphone access is required. Click the lock icon in the address bar and allow the microphone.');
       return;
     }
     setMicReady(true);
@@ -150,9 +187,10 @@ export default function HomePage() {
   }, [selectedInterests, search, webrtc]);
 
   const handleQuickMatch = useCallback(async () => {
+    await fetchIceServers();
     const stream = await webrtc.initLocalStream();
     if (!stream) {
-      alert('Microphone access is required to match with other musicians.');
+      alert('Microphone access is required. Click the lock icon in the address bar and allow the microphone.');
       return;
     }
     setMicReady(true);
@@ -271,6 +309,8 @@ export default function HomePage() {
                   durationSeconds={callDuration}
                   needsAudioUnlock={webrtc.needsAudioUnlock}
                   onUnlockAudio={webrtc.unlockRemoteAudio}
+                  onRetryAudio={isInitiator ? retryAudioConnection : undefined}
+                  isRetrying={isRetryingAudio}
                 />
                 <div className="mt-4">
                   <CallControls
