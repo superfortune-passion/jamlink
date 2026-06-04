@@ -93,12 +93,16 @@ export default function HomePage() {
   // WebRTC signaling handlers
   useEffect(() => {
     onMatched(async (data) => {
+      // Must set before ICE gathering — roomId state updates lag one render
+      roomIdRef.current = data.roomId;
+
       const rtc = webrtcRef.current;
       if (data.isInitiator) {
         const offer = await rtc.startCall(true, data.roomId);
         if (offer) sendOfferRef.current(data.roomId, offer);
       } else {
-        await rtc.startCall(false, data.roomId);
+        // Non-initiator: only prepare mic — handleOffer creates the peer connection
+        await rtc.initLocalStream();
       }
     });
 

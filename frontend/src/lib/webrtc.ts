@@ -95,7 +95,13 @@ export function attachRemoteAudio(
 ): void {
   if (!audioElement) return;
   audioElement.srcObject = stream;
-  audioElement.play().catch(() => {
-    // Autoplay may require user gesture
-  });
+  audioElement.volume = 1;
+  audioElement.muted = false;
+  const play = () => {
+    audioElement.play().catch(() => {
+      // Retry once after a tick (autoplay policy)
+      setTimeout(() => audioElement.play().catch(() => {}), 250);
+    });
+  };
+  play();
 }

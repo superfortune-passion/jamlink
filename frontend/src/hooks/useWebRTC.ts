@@ -45,6 +45,8 @@ export function useWebRTC({ iceServers, onIceCandidate }: UseWebRTCOptions): Use
   const remoteAudioRef = useRef<HTMLAudioElement>(null);
   const pendingCandidatesRef = useRef<RTCIceCandidateInit[]>([]);
   const roomIdRef = useRef<string | null>(null);
+  const iceServersRef = useRef(iceServers);
+  iceServersRef.current = iceServers;
 
   const cleanupPeerConnection = useCallback(() => {
     if (pcRef.current) {
@@ -86,7 +88,7 @@ export function useWebRTC({ iceServers, onIceCandidate }: UseWebRTCOptions): Use
     (stream: MediaStream) => {
       cleanupPeerConnection();
 
-      const config = buildRtcConfig(iceServers);
+      const config = buildRtcConfig(iceServersRef.current);
       const pc = createPeerConnection(config);
       pcRef.current = pc;
 
@@ -131,7 +133,7 @@ export function useWebRTC({ iceServers, onIceCandidate }: UseWebRTCOptions): Use
 
       return pc;
     },
-    [iceServers, onIceCandidate, cleanupPeerConnection]
+    [onIceCandidate, cleanupPeerConnection]
   );
 
   const flushPendingCandidates = useCallback(async () => {
@@ -170,10 +172,8 @@ export function useWebRTC({ iceServers, onIceCandidate }: UseWebRTCOptions): Use
       const stream = localStream ?? (await initLocalStream());
       if (!stream) throw new Error('No local stream');
 
-      let pc = pcRef.current;
-      if (!pc) {
-        pc = setupPeerConnection(stream);
-      }
+      // Always create a fresh PC when answering an offer
+      const pc = setupPeerConnection(stream);
 
       await pc.setRemoteDescription(new RTCSessionDescription(sdp));
       await flushPendingCandidates();
