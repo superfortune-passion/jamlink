@@ -120,9 +120,9 @@ export default function HomePage() {
     });
   }, [onMatched, onOffer, onAnswer, onIceCandidate, onPeerDisconnected]);
 
-  // Call duration timer
+  // Call duration timer — runs once matched (even while ICE is still connecting)
   useEffect(() => {
-    if (webrtc.isConnected) {
+    if (connectionState === 'matched') {
       timerRef.current = setInterval(() => setCallDuration((d) => d + 1), 1000);
     } else {
       if (timerRef.current) clearInterval(timerRef.current);
@@ -131,7 +131,7 @@ export default function HomePage() {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [webrtc.isConnected]);
+  }, [connectionState]);
 
   const toggleInterest = useCallback((id: string) => {
     setSelectedInterests((prev) =>
@@ -269,6 +269,8 @@ export default function HomePage() {
                   peerSpeaking={peerSpeaking}
                   connectionQuality={webrtc.connectionQuality}
                   durationSeconds={callDuration}
+                  needsAudioUnlock={webrtc.needsAudioUnlock}
+                  onUnlockAudio={webrtc.unlockRemoteAudio}
                 />
                 <div className="mt-4">
                   <CallControls

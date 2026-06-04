@@ -10,6 +10,8 @@ interface ConnectedPanelProps {
   peerSpeaking: boolean;
   connectionQuality: string;
   durationSeconds: number;
+  needsAudioUnlock?: boolean;
+  onUnlockAudio?: () => void;
 }
 
 function formatDuration(seconds: number): string {
@@ -24,6 +26,8 @@ function ConnectedPanelComponent({
   peerSpeaking,
   connectionQuality,
   durationSeconds,
+  needsAudioUnlock,
+  onUnlockAudio,
 }: ConnectedPanelProps) {
   return (
     <motion.div
@@ -63,8 +67,34 @@ function ConnectedPanelComponent({
         </div>
       )}
 
+      {needsAudioUnlock && onUnlockAudio && (
+        <button
+          type="button"
+          onClick={onUnlockAudio}
+          className="w-full py-2.5 px-4 rounded-xl bg-cyan-600/30 border border-cyan-500/50 text-cyan-200 text-sm font-medium hover:bg-cyan-600/40 transition-colors animate-pulse"
+        >
+          🔊 Tap to enable peer audio
+        </button>
+      )}
+
       <p className="text-xs text-zinc-600 text-center">
-        Connection: <span className="text-zinc-400 capitalize">{connectionQuality}</span>
+        Connection:{' '}
+        <span
+          className={`capitalize ${
+            connectionQuality === 'excellent'
+              ? 'text-emerald-400'
+              : connectionQuality === 'good'
+                ? 'text-cyan-400'
+                : connectionQuality === 'poor'
+                  ? 'text-amber-400'
+                  : 'text-zinc-500'
+          }`}
+        >
+          {connectionQuality}
+        </span>
+        {connectionQuality === 'unknown' && (
+          <span className="block text-zinc-600 mt-1">Waiting for audio link…</span>
+        )}
       </p>
     </motion.div>
   );

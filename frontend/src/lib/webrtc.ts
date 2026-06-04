@@ -3,12 +3,31 @@ import type { IceServerConfig } from '@/types';
 export const DEFAULT_STUN: IceServerConfig[] = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
+  { urls: 'stun:freeturn.net:3478' },
 ];
 
-export function buildRtcConfig(iceServers: IceServerConfig[]): RTCConfiguration {
+/** Fallback TURN when server config hasn't loaded yet — critical for strict NAT / office networks */
+export const DEFAULT_TURN: IceServerConfig[] = [
+  { urls: 'turn:freeturn.net:3478', username: 'free', credential: 'free' },
+  { urls: 'turns:freeturn.net:5349', username: 'free', credential: 'free' },
+];
+
+export function mergeIceServers(servers: IceServerConfig[]): IceServerConfig[] {
+  if (!servers.length) return [...DEFAULT_STUN, ...DEFAULT_TURN];
+  const hasTurn = servers.some((s) => {
+    const urls = Array.isArray(s.urls) ? s.urls : [s.urls];
+    return urls.some((u) => u.startsWith('turn'));
+  });
+  return hasTurn ? servers : [...servers, ...DEFAULT_TURN];
+}
+
+export function buildRtcConfig(
+  iceServers: IceServerConfig[],
+  relayOnly = false
+): RTCConfiguration {
   return {
-    iceServers: iceServers.length ? iceServers : DEFAULT_STUN,
-    iceTransportPolicy: 'all',
+    iceServers: mergeIceServers(iceServers),
+    iceTransportPolicy: relayOnly ? 'relay' : 'all',
     bundlePolicy: 'max-bundle',
     rtcpMuxPolicy: 'require',
     iceCandidatePoolSize: 10,
@@ -90,19 +109,25 @@ export async function createAnswer(pc: RTCPeerConnection): Promise<RTCSessionDes
   return answer;
 }
 
-export function attachRemoteAudio(
+export async function attachRemoteAudio(
   stream: MediaStream,
   audioElement: HTMLAudioElement | null
-): void {
-  if (!audioElement) return;
+): Promise<boolean> {
+  if (!audioElement) return false;
   audioElement.srcObject = stream;
   audioElement.volume = 1;
   audioElement.muted = false;
-  const play = () => {
-    audioElement.play().catch(() => {
-      // Retry once after a tick (autoplay policy)
-      setTimeout(() => audioElement.play().catch(() => {}), 250);
-    });
-  };
-  play();
+  audioElement.autoplay = true;
+  try {
+    await audioElement.play();
+    return true;
+  } catch {
+    try {
+      await new Promise((r) => setTimeout(r, 300));
+      await audioElement.play();
+      return true;
+    } catch {
+      return false;
+    }
+  }
 }

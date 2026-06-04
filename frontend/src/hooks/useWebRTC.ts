@@ -23,12 +23,14 @@ interface UseWebRTCReturn {
   remoteStream: MediaStream | null;
   isMuted: boolean;
   isConnected: boolean;
+  needsAudioUnlock: boolean;
   connectionQuality: 'excellent' | 'good' | 'poor' | 'unknown';
   initLocalStream: () => Promise<MediaStream | null>;
   startCallAsInitiator: (roomId: string) => Promise<RTCSessionDescriptionInit | null>;
   handleOffer: (sdp: RTCSessionDescriptionInit, roomId: string) => Promise<RTCSessionDescriptionInit>;
   handleAnswer: (sdp: RTCSessionDescriptionInit) => Promise<void>;
   handleIceCandidate: (candidate: RTCIceCandidateInit) => Promise<void>;
+  unlockRemoteAudio: () => Promise<void>;
   toggleMute: () => void;
   endCall: () => void;
   remoteAudioRef: React.RefObject<HTMLAudioElement>;
@@ -43,6 +45,7 @@ export function useWebRTC({ iceServers, onIceCandidate }: UseWebRTCOptions): Use
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [isMuted, setIsMuted] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
+  const [needsAudioUnlock, setNeedsAudioUnlock] = useState(false);
   const [connectionQuality, setConnectionQuality] = useState<'excellent' | 'good' | 'poor' | 'unknown'>('unknown');
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
@@ -52,6 +55,7 @@ export function useWebRTC({ iceServers, onIceCandidate }: UseWebRTCOptions): Use
   const iceServersRef = useRef(iceServers);
   const onIceCandidateRef = useRef(onIceCandidate);
   const localStreamRef = useRef<MediaStream | null>(null);
+  const relayRetryRef = useRef(false);
 
   iceServersRef.current = iceServers;
   onIceCandidateRef.current = onIceCandidate;
@@ -68,8 +72,10 @@ export function useWebRTC({ iceServers, onIceCandidate }: UseWebRTCOptions): Use
     }
     pendingCandidatesRef.current = [];
     activeRoomIdRef.current = null;
+    relayRetryRef.current = false;
     setRemoteStream(null);
     setIsConnected(false);
+    setNeedsAudioUnlock(false);
     setConnectionQuality('unknown');
   }, []);
 
@@ -110,17 +116,25 @@ export function useWebRTC({ iceServers, onIceCandidate }: UseWebRTCOptions): Use
       try {
         await pc.addIceCandidate(new RTCIceCandidate(candidate));
       } catch {
-        // Stale candidate — ignore
+        // Stale candidate
       }
     }
   }, []);
 
+  const handleRemoteTrack = useCallback(async (remote: MediaStream) => {
+    setRemoteStream(remote);
+    const played = await attachRemoteAudio(remote, remoteAudioRef.current);
+    if (!played) setNeedsAudioUnlock(true);
+    setIsConnected(true);
+  }, []);
+
   const setupPeerConnection = useCallback(
-    (stream: MediaStream, roomId: string) => {
+    (stream: MediaStream, roomId: string, relayOnly = false) => {
       cleanupPeerConnection();
       activeRoomIdRef.current = roomId;
+      relayRetryRef.current = false;
 
-      const config = buildRtcConfig(iceServersRef.current);
+      const config = buildRtcConfig(iceServersRef.current, relayOnly);
       const pc = createPeerConnection(config);
       pcRef.current = pc;
 
@@ -129,11 +143,8 @@ export function useWebRTC({ iceServers, onIceCandidate }: UseWebRTCOptions): Use
       });
 
       pc.ontrack = (event) => {
-        const remote =
-          event.streams?.[0] ?? new MediaStream([event.track]);
-        setRemoteStream(remote);
-        attachRemoteAudio(remote, remoteAudioRef.current);
-        setIsConnected(true);
+        const remote = event.streams?.[0] ?? new MediaStream([event.track]);
+        void handleRemoteTrack(remote);
       };
 
       pc.onicecandidate = (event) => {
@@ -162,14 +173,20 @@ export function useWebRTC({ iceServers, onIceCandidate }: UseWebRTCOptions): Use
           setIsConnected(true);
         } else if (state === 'checking') {
           setConnectionQuality('good');
-        } else if (state === 'disconnected' || state === 'failed') {
+        } else if (state === 'disconnected') {
           setConnectionQuality('poor');
+        } else if (state === 'failed') {
+          setConnectionQuality('poor');
+          if (!relayRetryRef.current && pc.restartIce) {
+            relayRetryRef.current = true;
+            void pc.restartIce();
+          }
         }
       };
 
       return pc;
     },
-    [cleanupPeerConnection]
+    [cleanupPeerConnection, handleRemoteTrack]
   );
 
   const startCallAsInitiator = useCallback(
@@ -211,25 +228,29 @@ export function useWebRTC({ iceServers, onIceCandidate }: UseWebRTCOptions): Use
     [flushPendingCandidates]
   );
 
-  const handleIceCandidate = useCallback(
-    async (candidate: RTCIceCandidateInit) => {
-      const pc = pcRef.current;
-      if (!pc) {
-        pendingCandidatesRef.current.push(candidate);
-        return;
-      }
-      if (!pc.remoteDescription) {
-        pendingCandidatesRef.current.push(candidate);
-        return;
-      }
-      try {
-        await pc.addIceCandidate(new RTCIceCandidate(candidate));
-      } catch {
-        pendingCandidatesRef.current.push(candidate);
-      }
-    },
-    []
-  );
+  const handleIceCandidate = useCallback(async (candidate: RTCIceCandidateInit) => {
+    const pc = pcRef.current;
+    if (!pc || !pc.remoteDescription) {
+      pendingCandidatesRef.current.push(candidate);
+      return;
+    }
+    try {
+      await pc.addIceCandidate(new RTCIceCandidate(candidate));
+    } catch {
+      pendingCandidatesRef.current.push(candidate);
+    }
+  }, []);
+
+  const unlockRemoteAudio = useCallback(async () => {
+    const el = remoteAudioRef.current;
+    if (!el) return;
+    try {
+      await el.play();
+      setNeedsAudioUnlock(false);
+    } catch (err) {
+      console.error('Audio unlock failed:', err);
+    }
+  }, []);
 
   const toggleMute = useCallback(() => {
     setIsMuted((prev) => {
@@ -239,10 +260,11 @@ export function useWebRTC({ iceServers, onIceCandidate }: UseWebRTCOptions): Use
     });
   }, []);
 
-  // Re-attach remote audio when stream or ref updates
   useEffect(() => {
     if (remoteStream && remoteAudioRef.current) {
-      attachRemoteAudio(remoteStream, remoteAudioRef.current);
+      void attachRemoteAudio(remoteStream, remoteAudioRef.current).then((ok) => {
+        if (!ok) setNeedsAudioUnlock(true);
+      });
     }
   }, [remoteStream]);
 
@@ -258,12 +280,14 @@ export function useWebRTC({ iceServers, onIceCandidate }: UseWebRTCOptions): Use
     remoteStream,
     isMuted,
     isConnected,
+    needsAudioUnlock,
     connectionQuality,
     initLocalStream,
     startCallAsInitiator,
     handleOffer,
     handleAnswer,
     handleIceCandidate,
+    unlockRemoteAudio,
     toggleMute,
     endCall,
     remoteAudioRef,
